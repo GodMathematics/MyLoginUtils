@@ -6,12 +6,18 @@ import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.annotation.Pointcut;
 import org.aspectj.lang.reflect.MethodSignature;
+import org.example.myloginutils.model.LoginInfo;
+import org.example.myloginutils.utils.CookieUtil;
+import org.example.myloginutils.utils.JwtUtil;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.BeanPropertyRowMapper;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Date;
+import java.util.List;
 
 @Aspect
 @Component
@@ -26,21 +32,23 @@ public class LoginAnnoAspect {
 
     // 环绕通知（最灵活）
     @Around("logExecutionTimePointcut()")
-    public Object logExecutionTime(ProceedingJoinPoint joinPoint) throws Throwable {
+    public LoginInfo logExecutionTime(ProceedingJoinPoint joinPoint) throws Throwable {
         long startTime = System.currentTimeMillis();
+        LoginInfo loginInfo = new LoginInfo();
         // 获取方法签名
         MethodSignature signature = (MethodSignature) joinPoint.getSignature();
         Method method = signature.getMethod();
-
         // 获取方法上的注解
         LoginToolAnno logAnnotation = method.getAnnotation(LoginToolAnno.class);
-
+        //用户信息
+        Object userInfo = null;
+        //构建sql
         String passwordField = logAnnotation.passwordField();
         String usernameField = logAnnotation.usernameField();
+        Class<?> voClass = logAnnotation.voClass();
         String usernameValue = "";  // 获取注解的 value 属性
         String passwordValue = "";
-
-
+        String userNumber = "";
         Object[] args = joinPoint.getArgs();
         for (Object arg : args) {
             if (arg != null) {
@@ -53,26 +61,38 @@ public class LoginAnnoAspect {
                         passwordValue = String.valueOf(value);
                     else if (field.getName().equals(usernameField))
                         usernameValue = String.valueOf(value);
+                    else if (field.getName().equals(usernameValue))
+                        userNumber = String.valueOf(value);
                 }
             }
         }
 
         String sql = logAnnotation.checkLoginSql();
-        boolean ableLogin = false;
         try {
+            //构建sql
             sql = String.format(sql, usernameValue, passwordValue);
+            // 执行 SQL 查询
+            List<?> result = jdbcTemplate.query(sql, new BeanPropertyRowMapper<>(voClass));
 
-            // 执行 SQL 语句（无返回值）
-            ableLogin = jdbcTemplate.queryForObject(sql, Integer.class) > 0;
+            if (!result.isEmpty())
+                userInfo = result.get(0);
         } catch (Exception e){
             log.error("sql {}; error : {}",sql,e.toString());
         }
 
-
+        //略
         long duration = System.currentTimeMillis() - startTime;
         String methodName = joinPoint.getSignature().toShortString();
-
         System.out.println("[AOP] 方法 " + methodName + " 执行耗时: " + duration + "ms");
-        return ableLogin;
+
+        if (userInfo == null) {
+            return loginInfo.setMessage("用户不存在");
+        } else {
+            // 创建 Cookie
+            loginInfo.setCookie(CookieUtil.setJwtCookie(JwtUtil.generateToken(userNumber)));
+            loginInfo.setUserInfo(userInfo);
+
+            return loginInfo.setMessage("登录成功");
+        }
     }
 }

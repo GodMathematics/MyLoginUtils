@@ -14,5 +14,5 @@ public @interface LoginToolAnno {
 
     String checkLoginSql();
 
-
+    Class<?> voClass();
 }
